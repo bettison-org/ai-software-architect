@@ -11,29 +11,21 @@ Sets up and customizes the AI Software Architect framework for a project.
 ## Overview
 
 This skill performs a complete framework installation:
-1. Verifies prerequisites (framework cloned, project root confirmed)
-2. Analyzes project (languages, frameworks, structure, patterns)
-3. Installs framework files and directory structure
-4. Customizes team members and principles for detected tech stack
+1. Analyzes project (languages, frameworks, structure, patterns)
+2. Installs framework files via deterministic script
+3. Customizes team members and principles for detected tech stack
+4. Updates CLAUDE.md integration
 5. Performs initial system analysis
 6. Reports customizations and findings
 
-**Detailed procedures**: [references/installation-procedures.md](references/installation-procedures.md)
 **Customization guide**: [references/customization-guide.md](references/customization-guide.md)
+**Troubleshooting**: [references/installation-procedures.md](references/installation-procedures.md)
 
 ## High-Level Workflow
 
-### 1. Verify Prerequisites
+### 1. Analyze Project
 
-Check requirements before installation:
-- `.architecture/.architecture/` directory exists (cloned framework)
-- Currently in project root directory
-
-**If missing**: Guide user to clone framework first.
-
-### 2. Analyze Project
-
-Identify project characteristics:
+Identify project characteristics before installation:
 - **Languages**: JavaScript/TypeScript, Python, Ruby, Java, Go, Rust
 - **Frameworks**: React, Vue, Django, Rails, Spring, etc.
 - **Infrastructure**: Testing setup, CI/CD, package managers
@@ -41,18 +33,24 @@ Identify project characteristics:
 
 Use `Glob` and `Grep` to detect technologies, `Read` to examine configs.
 
-### 3. Install Framework
+### 2. Install Framework
 
-Execute installation steps (see [references/installation-procedures.md](references/installation-procedures.md)):
-- Copy framework files to `.architecture/`
-- Remove clone directory
-- Create directory structure (decisions/adrs, reviews, recalibration, etc.)
-- Initialize configuration from templates
-- Set up agent documentation (ADR-006 progressive disclosure)
+**If `.architecture/.architecture/` does not exist**, guide the user to clone first:
+```
+git clone https://github.com/bettison-org/ai-software-architect .architecture/.architecture
+```
 
-**Critical**: Follow safety procedures when removing `.git/` directory.
+**Once cloned**, run the installation script. The script handles all file operations deterministically: prerequisite checks, copying framework files, creating directories, initializing config, cleaning up framework docs, and safely removing the template `.git/` directory.
 
-### 4. Customize Architecture Team
+```bash
+bash "<skill-base-dir>/scripts/install-framework.sh" "$(pwd)"
+```
+
+Where `<skill-base-dir>` is this skill's base directory shown at the top of the skill prompt.
+
+The script outputs structured status tokens. If it fails, check stderr for the specific error. See [references/installation-procedures.md § Troubleshooting](references/installation-procedures.md#troubleshooting) for recovery steps.
+
+### 3. Customize Architecture Team
 
 Add technology-specific members to `.architecture/members.yml`:
 - **JavaScript/TypeScript**: JavaScript Expert, framework specialists (React/Vue/Angular)
@@ -68,7 +66,7 @@ Use template from [assets/member-template.yml](assets/member-template.yml).
 
 **Customization details**: [references/customization-guide.md § Customize Team Members](references/customization-guide.md#customize-architecture-team-members)
 
-### 5. Customize Architectural Principles
+### 4. Customize Architectural Principles
 
 Add framework-specific principles to `.architecture/principles.md`:
 - **React**: Component composition, hooks, unidirectional data flow
@@ -77,7 +75,7 @@ Add framework-specific principles to `.architecture/principles.md`:
 
 **Principle examples**: [references/customization-guide.md § Customize Principles](references/customization-guide.md#customize-architectural-principles)
 
-### 6. Update CLAUDE.md Integration
+### 5. Update CLAUDE.md Integration
 
 If `CLAUDE.md` exists in project root, append framework usage section:
 - Available commands
@@ -86,15 +84,7 @@ If `CLAUDE.md` exists in project root, append framework usage section:
 
 **Template**: [references/customization-guide.md § Update CLAUDE.md](references/customization-guide.md#update-claudemd-integration)
 
-### 7. Cleanup
-
-Remove framework development files:
-- Framework documentation (README.md, USAGE*.md, INSTALL.md)
-- Template `.git/` directory (with **critical safety checks**)
-
-**⚠️  IMPORTANT**: Follow all safeguards in [references/installation-procedures.md § Cleanup](references/installation-procedures.md#cleanup-procedures).
-
-### 8. Create Initial System Analysis
+### 6. Create Initial System Analysis
 
 Generate comprehensive initial analysis document:
 - Each member analyzes system from their perspective
@@ -108,7 +98,7 @@ Save to `.architecture/reviews/initial-system-analysis.md`.
 
 **Template**: [assets/initial-analysis-template.md](assets/initial-analysis-template.md)
 
-### 9. Report to User
+### 7. Report to User
 
 Provide setup summary:
 
@@ -141,9 +131,22 @@ Next Steps:
 ```
 The framework must be cloned first. Please run:
 
-git clone https://github.com/codenamev/ai-software-architect .architecture/.architecture
+git clone https://github.com/bettison-org/ai-software-architect .architecture/.architecture
 
 Then run setup again.
+```
+
+**Installation script fails**:
+```
+The installation script exited with an error. Check the error message above.
+
+Common causes:
+- Exit 1: Framework not cloned or bad project path
+- Exit 2: File copy failed (check permissions)
+- Exit 3: Safety check failed during .git cleanup (manual verification needed)
+- Exit 4: Installation incomplete (missing files after copy)
+
+For recovery: see references/installation-procedures.md § Troubleshooting
 ```
 
 **Already set up**:
@@ -184,11 +187,11 @@ Setup → Review initial analysis → Create ADRs → Status check → Regular r
 - Customize based on **actual** project, not every possible option
 - Be specific about **why** each customization was made
 - Initial analysis should be thorough but focused on actionable findings
-- Safety checks during cleanup are **non-negotiable**
+- The installation script handles all file operations — do not manually run cp/mkdir/rm commands
 
 ## Documentation
 
-- **Installation details**: [references/installation-procedures.md](references/installation-procedures.md)
+- **Troubleshooting & recovery**: [references/installation-procedures.md](references/installation-procedures.md)
 - **Customization guide**: [references/customization-guide.md](references/customization-guide.md)
 - **Initial analysis template**: [assets/initial-analysis-template.md](assets/initial-analysis-template.md)
 - **Member template**: [assets/member-template.yml](assets/member-template.yml)

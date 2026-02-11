@@ -362,6 +362,254 @@ jobs:
         retention-days: 7
         include-hidden-files: true
 
+  script-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # --- install-framework.sh tests ---
+
+    - name: "install-framework.sh: success path"
+      run: |
+        echo "=== Testing install-framework.sh success path ==="
+        SCRIPT=".claude/skills/setup-architect/scripts/install-framework.sh"
+        PROJ="$(mktemp -d)"
+
+        # Simulate the nested clone structure the script expects
+        mkdir -p "$PROJ/.architecture/.architecture/.architecture"
+        # Add framework template files
+        mkdir -p "$PROJ/.architecture/.architecture/.architecture/templates"
+        mkdir -p "$PROJ/.architecture/.architecture/.architecture/decisions/adrs"
+        echo "members:" > "$PROJ/.architecture/.architecture/.architecture/members.yml"
+        echo "# principles" > "$PROJ/.architecture/.architecture/.architecture/principles.md"
+        cp .architecture/templates/config.yml "$PROJ/.architecture/.architecture/.architecture/templates/config.yml"
+        echo "# README" > "$PROJ/.architecture/.architecture/.architecture/README.md"
+        # Add fake .git to test cleanup
+        mkdir -p "$PROJ/.architecture/.architecture/.architecture/.git"
+        echo '[remote "origin"]' > "$PROJ/.architecture/.architecture/.architecture/.git/config"
+        echo '  url = https://github.com/bettison-org/ai-software-architect.git' >> "$PROJ/.architecture/.architecture/.architecture/.git/config"
+        # Add project markers
+        echo '{}' > "$PROJ/package.json"
+
+        OUTPUT=$(SKIP_GIT_CLEANUP=1 bash "$SCRIPT" "$PROJ")
+
+        # Verify tokens
+        echo "$OUTPUT" | grep -q "PREREQ_OK" && echo "✓ PREREQ_OK" || { echo "✗ missing PREREQ_OK"; exit 1; }
+        echo "$OUTPUT" | grep -q "COPY_OK" && echo "✓ COPY_OK" || { echo "✗ missing COPY_OK"; exit 1; }
+        echo "$OUTPUT" | grep -q "CLONE_REMOVED" && echo "✓ CLONE_REMOVED" || { echo "✗ missing CLONE_REMOVED"; exit 1; }
+        echo "$OUTPUT" | grep -q "DIRS_OK" && echo "✓ DIRS_OK" || { echo "✗ missing DIRS_OK"; exit 1; }
+        echo "$OUTPUT" | grep -q "VERIFY_OK" && echo "✓ VERIFY_OK" || { echo "✗ missing VERIFY_OK"; exit 1; }
+
+        # Verify files in correct locations
+        test -f "$PROJ/.architecture/members.yml" && echo "✓ members.yml" || { echo "✗ members.yml"; exit 1; }
+        test -f "$PROJ/.architecture/principles.md" && echo "✓ principles.md" || { echo "✗ principles.md"; exit 1; }
+        test -f "$PROJ/.architecture/config.yml" && echo "✓ config.yml" || { echo "✗ config.yml"; exit 1; }
+        test -d "$PROJ/.architecture/decisions/adrs" && echo "✓ adrs dir" || { echo "✗ adrs dir"; exit 1; }
+        test -d "$PROJ/.architecture/reviews" && echo "✓ reviews dir" || { echo "✗ reviews dir"; exit 1; }
+
+        # Clone directory should be removed
+        test ! -d "$PROJ/.architecture/.architecture" && echo "✓ clone removed" || { echo "✗ clone still present"; exit 1; }
+
+        # Cleanup docs should be removed
+        test ! -f "$PROJ/.architecture/README.md" && echo "✓ README cleaned" || { echo "✗ README still present"; exit 1; }
+
+        rm -rf "$PROJ"
+        echo "=== install-framework.sh success path: PASSED ==="
+
+    - name: "install-framework.sh: missing clone (exit 1)"
+      run: |
+        echo "=== Testing install-framework.sh missing clone ==="
+        SCRIPT=".claude/skills/setup-architect/scripts/install-framework.sh"
+        PROJ="$(mktemp -d)"
+        mkdir -p "$PROJ/.architecture"
+
+        set +e
+        OUTPUT=$(bash "$SCRIPT" "$PROJ" 2>&1)
+        EXIT_CODE=$?
+        set -e
+
+        test "$EXIT_CODE" -eq 1 && echo "✓ exit code 1" || { echo "✗ expected exit 1, got $EXIT_CODE"; exit 1; }
+        rm -rf "$PROJ"
+        echo "=== missing clone test: PASSED ==="
+
+    - name: "install-framework.sh: relative path (exit 1)"
+      run: |
+        echo "=== Testing install-framework.sh relative path ==="
+        SCRIPT=".claude/skills/setup-architect/scripts/install-framework.sh"
+
+        set +e
+        OUTPUT=$(bash "$SCRIPT" "relative/path" 2>&1)
+        EXIT_CODE=$?
+        set -e
+
+        test "$EXIT_CODE" -eq 1 && echo "✓ exit code 1" || { echo "✗ expected exit 1, got $EXIT_CODE"; exit 1; }
+        echo "=== relative path test: PASSED ==="
+
+    # --- next-adr-number.sh tests ---
+
+    - name: "next-adr-number.sh: sequential default"
+      run: |
+        echo "=== Testing next-adr-number.sh sequential default ==="
+        SCRIPT=".claude/skills/scripts/next-adr-number.sh"
+        TMPDIR="$(mktemp -d)"
+
+        # Create structure: architecture/decisions/adrs + config
+        mkdir -p "$TMPDIR/decisions/adrs"
+        cat > "$TMPDIR/config.yml" << 'YAML'
+        adr:
+          numbering_format: sequential
+        YAML
+
+        # No existing ADRs — should return 001
+        OUTPUT=$(bash "$SCRIPT" "$TMPDIR/decisions/adrs")
+        test "$OUTPUT" = "001" && echo "✓ first ADR: 001" || { echo "✗ expected 001, got '$OUTPUT'"; exit 1; }
+
+        # Create ADR-001 and ADR-002
+        touch "$TMPDIR/decisions/adrs/ADR-001-first-decision.md"
+        touch "$TMPDIR/decisions/adrs/ADR-002-second-decision.md"
+
+        OUTPUT=$(bash "$SCRIPT" "$TMPDIR/decisions/adrs")
+        test "$OUTPUT" = "003" && echo "✓ next after 002: 003" || { echo "✗ expected 003, got '$OUTPUT'"; exit 1; }
+
+        rm -rf "$TMPDIR"
+        echo "=== sequential default test: PASSED ==="
+
+    - name: "next-adr-number.sh: sequential custom padding"
+      run: |
+        echo "=== Testing next-adr-number.sh sequential custom padding ==="
+        SCRIPT=".claude/skills/scripts/next-adr-number.sh"
+        TMPDIR="$(mktemp -d)"
+
+        mkdir -p "$TMPDIR/decisions/adrs"
+        cat > "$TMPDIR/config.yml" << 'YAML'
+        adr:
+          numbering_format: sequential
+          sequential_format: "0000"
+        YAML
+
+        OUTPUT=$(bash "$SCRIPT" "$TMPDIR/decisions/adrs")
+        test "$OUTPUT" = "0001" && echo "✓ 4-digit padding: 0001" || { echo "✗ expected 0001, got '$OUTPUT'"; exit 1; }
+
+        rm -rf "$TMPDIR"
+        echo "=== sequential custom padding test: PASSED ==="
+
+    - name: "next-adr-number.sh: date-based"
+      run: |
+        echo "=== Testing next-adr-number.sh date-based ==="
+        SCRIPT=".claude/skills/scripts/next-adr-number.sh"
+        TMPDIR="$(mktemp -d)"
+
+        mkdir -p "$TMPDIR/decisions/adrs"
+        cat > "$TMPDIR/config.yml" << 'YAML'
+        adr:
+          numbering_format: date-based
+        YAML
+
+        EXPECTED=$(date +"%Y%m%d")
+        OUTPUT=$(bash "$SCRIPT" "$TMPDIR/decisions/adrs")
+        test "$OUTPUT" = "$EXPECTED" && echo "✓ date-based: $EXPECTED" || { echo "✗ expected $EXPECTED, got '$OUTPUT'"; exit 1; }
+
+        rm -rf "$TMPDIR"
+        echo "=== date-based test: PASSED ==="
+
+    - name: "next-adr-number.sh: date-based custom format"
+      run: |
+        echo "=== Testing next-adr-number.sh date-based custom format ==="
+        SCRIPT=".claude/skills/scripts/next-adr-number.sh"
+        TMPDIR="$(mktemp -d)"
+
+        mkdir -p "$TMPDIR/decisions/adrs"
+        cat > "$TMPDIR/config.yml" << 'YAML'
+        adr:
+          numbering_format: date-based
+          date_format: "%Y-%m-%d"
+        YAML
+
+        EXPECTED=$(date +"%Y-%m-%d")
+        OUTPUT=$(bash "$SCRIPT" "$TMPDIR/decisions/adrs")
+        test "$OUTPUT" = "$EXPECTED" && echo "✓ custom date: $EXPECTED" || { echo "✗ expected $EXPECTED, got '$OUTPUT'"; exit 1; }
+
+        rm -rf "$TMPDIR"
+        echo "=== date-based custom format test: PASSED ==="
+
+    - name: "next-adr-number.sh: collision detection (exit 2)"
+      run: |
+        echo "=== Testing next-adr-number.sh collision detection ==="
+        SCRIPT=".claude/skills/scripts/next-adr-number.sh"
+        TMPDIR="$(mktemp -d)"
+
+        mkdir -p "$TMPDIR/decisions/adrs"
+        cat > "$TMPDIR/config.yml" << 'YAML'
+        adr:
+          numbering_format: sequential
+        YAML
+
+        # Create existing ADR with topic
+        touch "$TMPDIR/decisions/adrs/ADR-001-use-postgres.md"
+
+        set +e
+        OUTPUT=$(bash "$SCRIPT" "$TMPDIR/decisions/adrs" "use-postgres" 2>&1)
+        EXIT_CODE=$?
+        set -e
+
+        # Script should return next number (002) without collision since prefix differs
+        # But if we force same prefix: create scenario where next is 002 and topic matches
+        touch "$TMPDIR/decisions/adrs/ADR-002-caching-strategy.md"
+        set +e
+        OUTPUT=$(bash "$SCRIPT" "$TMPDIR/decisions/adrs" "caching-strategy" 2>/dev/null)
+        EXIT_CODE=$?
+        set -e
+
+        # Next number would be 003, no collision with "caching-strategy" at 003
+        # To get actual collision: create ADR-003-caching-strategy.md
+        touch "$TMPDIR/decisions/adrs/ADR-003-caching-strategy.md"
+        set +e
+        OUTPUT=$(bash "$SCRIPT" "$TMPDIR/decisions/adrs" "caching-strategy" 2>&1)
+        EXIT_CODE=$?
+        set -e
+
+        # Hmm, the script generates prefix 004 (next after 003), not 003
+        # Collision only happens if generated prefix matches existing file
+        # For sequential, this can't happen by definition (always increments)
+        # Collision detection is mainly for date-based where two ADRs on same day with same topic
+        echo "✓ sequential collision: N/A (always increments)"
+
+        # Test date-based collision
+        cat > "$TMPDIR/config.yml" << 'YAML'
+        adr:
+          numbering_format: date-based
+        YAML
+
+        TODAY=$(date +"%Y%m%d")
+        touch "$TMPDIR/decisions/adrs/ADR-${TODAY}-use-redis.md"
+
+        set +e
+        bash "$SCRIPT" "$TMPDIR/decisions/adrs" "use-redis" 2>/dev/null
+        EXIT_CODE=$?
+        set -e
+
+        test "$EXIT_CODE" -eq 2 && echo "✓ date collision detected: exit 2" || { echo "✗ expected exit 2, got $EXIT_CODE"; exit 1; }
+
+        rm -rf "$TMPDIR"
+        echo "=== collision detection test: PASSED ==="
+
+    - name: "next-adr-number.sh: missing config defaults"
+      run: |
+        echo "=== Testing next-adr-number.sh missing config ==="
+        SCRIPT=".claude/skills/scripts/next-adr-number.sh"
+        TMPDIR="$(mktemp -d)"
+
+        # Create adrs dir but no config.yml
+        mkdir -p "$TMPDIR/decisions/adrs"
+
+        OUTPUT=$(bash "$SCRIPT" "$TMPDIR/decisions/adrs")
+        test "$OUTPUT" = "001" && echo "✓ default without config: 001" || { echo "✗ expected 001, got '$OUTPUT'"; exit 1; }
+
+        rm -rf "$TMPDIR"
+        echo "=== missing config defaults test: PASSED ==="
+
   cross-compatibility-test:
     runs-on: ubuntu-latest
     needs: claude-setup-tests
