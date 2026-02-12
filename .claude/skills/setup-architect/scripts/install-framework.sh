@@ -1,25 +1,22 @@
 #!/usr/bin/env bash
 # install-framework.sh - Deterministic installation of AI Software Architect framework
 #
-# Handles all file operations for setup-architect skill:
-#   1. Verify prerequisites (framework cloned, project markers)
-#   2. Copy framework files from clone to .architecture/
-#   3. Remove clone directory
-#   4. Create directory structure
-#   5. Initialize configuration from template
-#   6. Cleanup framework docs and .git
-#   7. Verify installation
+# Manifest-based installation: clones repo to /tmp, copies only files listed
+# in .install-manifest, creates empty directories, initialises config.
+# Content generation (members.yml, principles.md, initial analysis) is handled
+# by the skill's interpretive steps, not this script.
 #
-# Usage: install-framework.sh <project-root>
+# Usage: install-framework.sh <project-root> [repo-url]
 #
 # Arguments:
 #   project-root  Absolute path to the target project root directory
+#   repo-url      Git repo URL (default: https://github.com/codenamev/ai-software-architect)
 #
 # Exit codes:
 #   0  Success - all steps completed
-#   1  Prerequisites failed (framework not cloned or bad arguments)
+#   1  Prerequisites failed (bad arguments, clone failed)
 #   2  Copy failed
-#   3  Cleanup failed (safety check)
+#   3  Manifest error (missing or malformed)
 #   4  Verification failed (installation incomplete)
 #
 # Stdout: structured status tokens (one per line)
@@ -27,9 +24,11 @@
 
 set -euo pipefail
 
-PROJECT_ROOT="${1:?Usage: install-framework.sh <project-root>}"
+PROJECT_ROOT="${1:?Usage: install-framework.sh <project-root> [repo-url]}"
+REPO_URL="${2:-https://github.com/codenamev/ai-software-architect}"
 
-# Validate project root is absolute path
+# --- Validation ---
+
 if [[ "$PROJECT_ROOT" != /* ]]; then
   echo "ERROR: project-root must be an absolute path: $PROJECT_ROOT" >&2
   exit 1
@@ -41,18 +40,20 @@ if [ ! -d "$PROJECT_ROOT" ]; then
 fi
 
 ARCH_DIR="$PROJECT_ROOT/.architecture"
-CLONE_DIR="$ARCH_DIR/.architecture"
-SOURCE_DIR="$CLONE_DIR/.architecture"
+CLONE_DIR="${CLONE_DIR_OVERRIDE:-/tmp/ai-software-architect-$$}"
+MANIFEST_NAME=".install-manifest"
 
-# --- Phase 1: Prerequisites ---
-
-check_prerequisites() {
-  if [ ! -d "$SOURCE_DIR" ]; then
-    echo "ERROR: Framework not found at $SOURCE_DIR" >&2
-    echo "Clone first: git clone https://github.com/bettison-org/ai-software-architect $CLONE_DIR" >&2
-    exit 1
+# Clean up temp directory on exit (skip if using override)
+cleanup() {
+  if [ -z "${CLONE_DIR_OVERRIDE:-}" ] && [ -d "$CLONE_DIR" ]; then
+    rm -rf "$CLONE_DIR"
   fi
+}
+trap cleanup EXIT
 
+# --- Phase 1: Clone ---
+
+clone_repo() {
   # Warn (don't fail) if no project markers found
   local has_marker=false
   for marker in package.json Gemfile requirements.txt go.mod Cargo.toml .git Makefile; do
@@ -66,103 +67,99 @@ check_prerequisites() {
     echo "WARNING: No project markers found in $PROJECT_ROOT" >&2
   fi
 
-  echo "PREREQ_OK"
-}
-
-# --- Phase 2: Install ---
-
-copy_framework() {
-  if ! cp -r "$SOURCE_DIR"/* "$ARCH_DIR"/ 2>&2; then
-    echo "ERROR: Failed to copy framework files from $SOURCE_DIR to $ARCH_DIR" >&2
-    exit 2
-  fi
-  echo "COPY_OK"
-}
-
-remove_clone() {
-  rm -rf "$CLONE_DIR"
-  if [ ! -d "$CLONE_DIR" ]; then
-    echo "CLONE_REMOVED"
-  else
-    echo "WARNING: Clone directory still exists: $CLONE_DIR" >&2
-  fi
-}
-
-create_directories() {
-  mkdir -p "$PROJECT_ROOT/.coding-assistants/claude"
-  mkdir -p "$PROJECT_ROOT/.coding-assistants/cursor"
-  mkdir -p "$PROJECT_ROOT/.coding-assistants/codex"
-  mkdir -p "$ARCH_DIR/decisions/adrs"
-  mkdir -p "$ARCH_DIR/reviews"
-  mkdir -p "$ARCH_DIR/recalibration"
-  mkdir -p "$ARCH_DIR/comparisons"
-  mkdir -p "$ARCH_DIR/agent_docs"
-  echo "DIRS_OK"
-}
-
-init_config() {
-  if [ -f "$ARCH_DIR/templates/config.yml" ] && [ ! -f "$ARCH_DIR/config.yml" ]; then
-    cp "$ARCH_DIR/templates/config.yml" "$ARCH_DIR/config.yml"
-    echo "CONFIG_INIT"
-  elif [ -f "$ARCH_DIR/config.yml" ]; then
-    echo "CONFIG_EXISTS"
-  else
-    echo "WARNING: No config template found at $ARCH_DIR/templates/config.yml" >&2
-    echo "CONFIG_NO_TEMPLATE"
-  fi
-}
-
-# --- Phase 3: Cleanup ---
-
-cleanup_docs() {
-  rm -f "$ARCH_DIR/README.md"
-  rm -f "$ARCH_DIR"/USAGE*.md
-  rm -f "$ARCH_DIR/INSTALL.md"
-  echo "CLEANUP_DOCS_OK"
-}
-
-cleanup_git() {
-  local git_dir="$ARCH_DIR/.git"
-
-  # Check target exists
-  if [ ! -d "$git_dir" ]; then
-    echo "CLEANUP_GIT_NOT_FOUND"
+  # Skip clone if CLONE_DIR_OVERRIDE is set (for testing)
+  if [ -n "${CLONE_DIR_OVERRIDE:-}" ]; then
+    echo "CLONE_SKIPPED"
     return 0
   fi
 
-  # Allow skipping for testing
-  if [ "${SKIP_GIT_CLEANUP:-0}" = "1" ]; then
-    echo "CLEANUP_GIT_SKIPPED"
-    return 0
+  if ! git clone --depth 1 --quiet "$REPO_URL" "$CLONE_DIR" 2>&2; then
+    echo "ERROR: Failed to clone $REPO_URL" >&2
+    exit 1
   fi
 
-  # Safeguard 1: verify it's the template repo
-  if ! grep -q "ai-software-architect" "$git_dir/config" 2>/dev/null; then
-    echo "ERROR: $git_dir does not appear to be the template repository" >&2
-    echo "ERROR: Refusing to remove - manual verification required" >&2
-    exit 3
-  fi
-
-  # Safeguard 2: get absolute path and verify pattern
-  local abs_git_dir
-  abs_git_dir="$(cd "$ARCH_DIR" && pwd)/.git"
-  if [[ "$abs_git_dir" != *"/.architecture/.git" ]]; then
-    echo "ERROR: Path does not match expected pattern: $abs_git_dir" >&2
-    exit 3
-  fi
-
-  # Safeguard 3: execute removal with absolute path, no wildcards
-  rm -rf "$abs_git_dir"
-
-  if [ ! -d "$git_dir" ]; then
-    echo "CLEANUP_GIT_OK"
-  else
-    echo "ERROR: Failed to remove $git_dir" >&2
-    exit 3
-  fi
+  echo "CLONE_OK"
 }
 
-# --- Phase 4: Verify ---
+# --- Phase 2: Read manifest and install ---
+
+read_manifest() {
+  local manifest="$CLONE_DIR/$MANIFEST_NAME"
+
+  if [ ! -f "$manifest" ]; then
+    echo "ERROR: Manifest not found at $manifest" >&2
+    echo "ERROR: The repository may not support manifest-based installation" >&2
+    exit 3
+  fi
+
+  echo "MANIFEST_OK"
+}
+
+install_from_manifest() {
+  local manifest="$CLONE_DIR/$MANIFEST_NAME"
+  local source_arch="$CLONE_DIR/.architecture"
+  local copies=0
+  local dirs=0
+  local configs=0
+
+  mkdir -p "$ARCH_DIR"
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    # Skip comments and blank lines
+    line="${line%%#*}"
+    line="$(echo "$line" | xargs)" # trim whitespace
+    [ -z "$line" ] && continue
+
+    local directive="${line%%:*}"
+    local args="${line#*: }"
+
+    case "$directive" in
+      copy)
+        local src="$source_arch/$args"
+        if [ ! -e "$src" ]; then
+          echo "WARNING: Source not found, skipping: $args" >&2
+          continue
+        fi
+        if [ -d "$src" ]; then
+          mkdir -p "$ARCH_DIR/$args"
+          cp -r "$src"/* "$ARCH_DIR/$args"/ 2>/dev/null || true
+        else
+          local dest_dir
+          dest_dir="$(dirname "$ARCH_DIR/$args")"
+          mkdir -p "$dest_dir"
+          cp "$src" "$ARCH_DIR/$args"
+        fi
+        copies=$((copies + 1))
+        ;;
+      mkdir)
+        mkdir -p "$ARCH_DIR/$args"
+        dirs=$((dirs + 1))
+        ;;
+      config)
+        local src_path dest_path
+        src_path="$ARCH_DIR/$(echo "$args" | awk '{print $1}')"
+        dest_path="$ARCH_DIR/$(echo "$args" | awk '{print $2}')"
+        if [ -f "$src_path" ] && [ ! -f "$dest_path" ]; then
+          cp "$src_path" "$dest_path"
+          configs=$((configs + 1))
+          echo "CONFIG_INIT"
+        elif [ -f "$dest_path" ]; then
+          echo "CONFIG_EXISTS"
+        else
+          echo "WARNING: Config source not found: $src_path" >&2
+          echo "CONFIG_NO_TEMPLATE"
+        fi
+        ;;
+      *)
+        echo "WARNING: Unknown manifest directive: $directive" >&2
+        ;;
+    esac
+  done < "$manifest"
+
+  echo "INSTALL_OK:copies=$copies,dirs=$dirs,configs=$configs"
+}
+
+# --- Phase 3: Verify ---
 
 verify_installation() {
   local missing=()
@@ -170,10 +167,8 @@ verify_installation() {
   [ -d "$ARCH_DIR/decisions/adrs" ] || missing+=("decisions/adrs")
   [ -d "$ARCH_DIR/reviews" ] || missing+=("reviews")
   [ -d "$ARCH_DIR/recalibration" ] || missing+=("recalibration")
-  [ -d "$ARCH_DIR/agent_docs" ] || missing+=("agent_docs")
   [ -d "$ARCH_DIR/templates" ] || missing+=("templates")
-  [ -f "$ARCH_DIR/members.yml" ] || missing+=("members.yml")
-  [ -f "$ARCH_DIR/principles.md" ] || missing+=("principles.md")
+  [ -d "$ARCH_DIR/agent_docs" ] || missing+=("agent_docs")
 
   if [ ${#missing[@]} -gt 0 ]; then
     echo "ERROR: Installation incomplete. Missing: ${missing[*]}" >&2
@@ -182,13 +177,13 @@ verify_installation() {
 
   # Report what was installed
   local installed=()
-  [ -f "$ARCH_DIR/members.yml" ] && installed+=("members.yml")
-  [ -f "$ARCH_DIR/principles.md" ] && installed+=("principles.md")
   [ -f "$ARCH_DIR/config.yml" ] && installed+=("config.yml")
   [ -d "$ARCH_DIR/templates" ] && installed+=("templates/")
   [ -d "$ARCH_DIR/agent_docs" ] && installed+=("agent_docs/")
   [ -d "$ARCH_DIR/decisions/adrs" ] && installed+=("decisions/adrs/")
   [ -d "$ARCH_DIR/reviews" ] && installed+=("reviews/")
+  [ -d "$ARCH_DIR/recalibration" ] && installed+=("recalibration/")
+  [ -d "$ARCH_DIR/comparisons" ] && installed+=("comparisons/")
 
   echo "VERIFY_OK"
   echo "INSTALLED:$(IFS=,; echo "${installed[*]}")"
@@ -196,11 +191,7 @@ verify_installation() {
 
 # --- Execute ---
 
-check_prerequisites
-copy_framework
-remove_clone
-create_directories
-init_config
-cleanup_docs
-cleanup_git
+clone_repo
+read_manifest
+install_from_manifest
 verify_installation

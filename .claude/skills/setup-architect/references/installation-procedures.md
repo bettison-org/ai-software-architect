@@ -2,69 +2,89 @@
 
 This document provides troubleshooting, recovery, and reference information for the AI Software Architect framework installation.
 
-**Note**: All file operations (copy, directory creation, cleanup) are handled by the `install-framework.sh` script. This document covers what the script does, how to troubleshoot failures, and how to recover from errors.
+**Note**: All file operations are handled by `install-framework.sh`. This document covers what the script does, how to troubleshoot failures, and how to recover from errors.
 
 ## Table of Contents
 
 1. [What the Script Handles](#what-the-script-handles)
-2. [Script Interface](#script-interface)
-3. [Troubleshooting](#troubleshooting)
-4. [Recovery](#recovery)
-5. [Post-Installation](#post-installation)
+2. [The Install Manifest](#the-install-manifest)
+3. [Script Interface](#script-interface)
+4. [Troubleshooting](#troubleshooting)
+5. [Recovery](#recovery)
+6. [Post-Installation](#post-installation)
 
 ---
 
 ## What the Script Handles
 
-The `install-framework.sh` script at `scripts/install-framework.sh` performs all deterministic file operations in sequence:
+The `install-framework.sh` script at `scripts/install-framework.sh` performs all deterministic file operations:
 
-1. **Prerequisites** — Verifies `.architecture/.architecture/.architecture/` exists (the cloned framework). Warns if no project markers found.
-2. **Copy** — `cp -r .architecture/.architecture/.architecture/* .architecture/` copies only the framework template files.
-3. **Remove clone** — `rm -rf .architecture/.architecture` removes the temporary clone directory.
-4. **Create directories** — Creates all required directories: `.coding-assistants/claude`, `.coding-assistants/cursor`, `.coding-assistants/codex`, `.architecture/decisions/adrs`, `.architecture/reviews`, `.architecture/recalibration`, `.architecture/comparisons`, `.architecture/agent_docs`.
+1. **Clone** — Shallow-clones the framework repo to `/tmp/ai-software-architect-<pid>`. Warns if no project markers found in the target directory.
+2. **Read manifest** — Reads `.install-manifest` from the cloned repo to determine what to install.
+3. **Copy** — Copies only files and directories listed in the manifest (templates, agent docs).
+4. **Create directories** — Creates empty directories listed in the manifest (decisions/adrs, reviews, recalibration, comparisons).
 5. **Initialize config** — Copies `templates/config.yml` to `config.yml` if no config exists yet.
-6. **Cleanup docs** — Removes framework documentation files (`README.md`, `USAGE*.md`, `INSTALL.md`) from `.architecture/`.
-7. **Cleanup .git** — Safely removes the template repository's `.git/` directory using layered safeguards:
-   - Verifies it's the template repo (checks `ai-software-architect` in `.git/config`)
-   - Uses absolute path and verifies path pattern ends with `/.architecture/.git`
-   - No wildcards in the `rm` command
-   - Verifies removal succeeded
-8. **Verify** — Checks all required files and directories exist.
+6. **Cleanup** — Removes the temporary clone directory on exit (via trap).
+7. **Verify** — Checks all required directories exist.
+
+**What the script does NOT handle** (left to the skill's interpretive steps):
+- `members.yml` — created by the skill based on project analysis
+- `principles.md` — created by the skill based on detected tech stack
+- `reviews/initial-system-analysis.md` — created by the skill's analysis step
+
+---
+
+## The Install Manifest
+
+The `.install-manifest` file in the repository root controls what gets installed. It uses a simple line-based format:
+
+```
+# Comments start with #
+copy: templates           # Copy directory from repo's .architecture/
+copy: agent_docs          # Copy directory from repo's .architecture/
+mkdir: decisions/adrs     # Create empty directory
+mkdir: reviews            # Create empty directory
+config: templates/config.yml config.yml   # Copy src to dst if dst doesn't exist
+```
+
+**Directives:**
+- `copy: <path>` — Copy file or directory from the cloned repo's `.architecture/` to the target `.architecture/`
+- `mkdir: <path>` — Create empty directory in target `.architecture/`
+- `config: <src> <dst>` — Copy src to dst only if dst doesn't already exist
+
+Paths are relative to `.architecture/`.
 
 ---
 
 ## Script Interface
 
 ```
-Usage: install-framework.sh <project-root>
+Usage: install-framework.sh <project-root> [repo-url]
 
 Arguments:
   project-root    Absolute path to the target project root directory
+  repo-url        Git repo URL (default: https://github.com/codenamev/ai-software-architect)
 
 Environment variables:
-  SKIP_GIT_CLEANUP=1    Skip .git directory removal (for testing)
+  CLONE_DIR_OVERRIDE=<path>   Use pre-cloned directory instead of cloning (for testing)
 
 Exit codes:
   0  Success
-  1  Prerequisites failed (framework not cloned, bad path)
+  1  Clone failed or bad project path
   2  Copy failed
-  3  Cleanup safety check failed
+  3  Manifest not found or malformed
   4  Verification failed (installation incomplete)
 
 Stdout tokens:
-  PREREQ_OK           Prerequisites verified
-  COPY_OK             Framework files copied
-  CLONE_REMOVED       Clone directory removed
-  DIRS_OK             Directory structure created
-  CONFIG_INIT         Config initialized from template
-  CONFIG_EXISTS       Config already existed (not overwritten)
-  CONFIG_NO_TEMPLATE  No config template found
-  CLEANUP_DOCS_OK     Framework docs removed
-  CLEANUP_GIT_OK      Template .git removed
-  CLEANUP_GIT_NOT_FOUND  No .git to remove
-  CLEANUP_GIT_SKIPPED    Skipped (SKIP_GIT_CLEANUP=1)
-  VERIFY_OK           Installation verified
-  INSTALLED:<list>    Comma-separated list of installed components
+  CLONE_OK              Repository cloned successfully
+  CLONE_SKIPPED         Skipped (using CLONE_DIR_OVERRIDE)
+  MANIFEST_OK           Manifest found and readable
+  CONFIG_INIT           Config initialized from template
+  CONFIG_EXISTS         Config already existed (not overwritten)
+  CONFIG_NO_TEMPLATE    No config template found
+  INSTALL_OK:<stats>    Installation complete with copy/dir/config counts
+  VERIFY_OK             Installation verified
+  INSTALLED:<list>      Comma-separated list of installed components
 ```
 
 ---
@@ -73,45 +93,37 @@ Stdout tokens:
 
 ### Common Issues
 
-**"Framework not found" (exit 1)**
-- **Cause**: Framework not cloned to `.architecture/.architecture/`
-- **Solution**: `git clone https://github.com/bettison-org/ai-software-architect .architecture/.architecture`
+**"Failed to clone" (exit 1)**
+- **Cause**: Network error or invalid repo URL
+- **Solution**: Check network connectivity. Verify the repo URL is accessible.
 
 **"project-root must be an absolute path" (exit 1)**
 - **Cause**: Relative path passed to script
 - **Solution**: Use `"$(pwd)"` when invoking the script
 
-**"Failed to copy framework files" (exit 2)**
-- **Cause**: Insufficient file permissions
-- **Solution**: `chmod -R u+rw .architecture/`
-
-**"does not appear to be the template repository" (exit 3)**
-- **Cause**: `.architecture/.git/config` doesn't contain `ai-software-architect`
-- **Solution**: Manually verify the `.git` directory. If it's safe to remove, do so manually with `rm -rf "$(pwd)/.architecture/.git"`
-- **Never**: Override safety checks without understanding why they failed
+**"Manifest not found" (exit 3)**
+- **Cause**: The cloned repo doesn't contain `.install-manifest`
+- **Solution**: The repository may not support manifest-based installation. Check that you're cloning the correct repo/branch.
 
 **"Installation incomplete" (exit 4)**
-- **Cause**: Copy succeeded but some files are missing
-- **Solution**: Check what's missing (listed in error), verify the cloned framework contains all expected files
+- **Cause**: Manifest-listed items weren't created successfully
+- **Solution**: Check what's missing (listed in error output). Verify the cloned repo's `.architecture/` contains the expected files.
 
 ### Verification Commands
 
 Check installation completeness manually:
 
 ```bash
-# Required directories
+# Required directories (created by script)
 test -d .architecture/decisions/adrs && echo "OK ADRs" || echo "MISSING ADRs"
 test -d .architecture/reviews && echo "OK reviews" || echo "MISSING reviews"
 test -d .architecture/templates && echo "OK templates" || echo "MISSING templates"
+test -d .architecture/agent_docs && echo "OK agent_docs" || echo "MISSING agent_docs"
 
-# Required files
-test -f .architecture/members.yml && echo "OK members" || echo "MISSING members"
-test -f .architecture/principles.md && echo "OK principles" || echo "MISSING principles"
+# Created by skill (not script) — may not exist immediately after script
+test -f .architecture/members.yml && echo "OK members" || echo "PENDING members"
+test -f .architecture/principles.md && echo "OK principles" || echo "PENDING principles"
 test -f .architecture/config.yml && echo "OK config" || echo "MISSING config"
-
-# Should NOT exist after cleanup
-test -d .architecture/.git && echo "WARNING: template .git still present"
-test -d .architecture/.architecture && echo "WARNING: clone directory still present"
 ```
 
 ---
@@ -119,24 +131,25 @@ test -d .architecture/.architecture && echo "WARNING: clone directory still pres
 ## Recovery
 
 **If installation fails mid-process**:
-1. Remove partial installation: `rm -rf .architecture/` (if nothing important there yet)
-2. Re-clone framework: `git clone https://github.com/bettison-org/ai-software-architect .architecture/.architecture`
+1. The script cleans up the temp clone directory automatically (exit trap)
+2. Remove partial installation: `rm -rf .architecture/` (if nothing important there yet)
 3. Re-run the installation script
 
-**If you accidentally removed the wrong .git**:
-- If it was your project's `.git`: restore from backup immediately
-- The script's safeguards (template repo URL check, path pattern check) are specifically designed to prevent this
-- This is why the safeguards exist and must not be bypassed
+**If the target project already has `.architecture/`**:
+- The script is idempotent — running it again copies templates over existing ones and skips config if it already exists
+- Existing `members.yml`, `principles.md`, and reviews are not affected (the script doesn't create them)
 
 ---
 
 ## Post-Installation
 
-After the script completes successfully:
+After the script completes successfully, the skill continues with interpretive steps:
 
-1. **Customize** — The skill handles team members, principles, and CLAUDE.md
-2. **Verify setup**: Run `"What's our architecture status?"`
-3. **Review customizations**: Check `.architecture/members.yml` and `.architecture/principles.md`
-4. **Create first ADR**: Document an early architectural decision
+1. **Create team** — The skill creates `members.yml` based on project analysis
+2. **Create principles** — The skill creates `principles.md` based on detected tech stack
+3. **Update CLAUDE.md** — The skill appends framework usage section
+4. **Initial analysis** — The skill creates `reviews/initial-system-analysis.md`
+5. **Verify setup**: Run `"What's our architecture status?"`
+6. **Create first ADR**: Document an early architectural decision
 
 For customization procedures, see [customization-guide.md](./customization-guide.md).

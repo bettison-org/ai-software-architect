@@ -12,11 +12,12 @@ Sets up and customizes the AI Software Architect framework for a project.
 
 This skill performs a complete framework installation:
 1. Analyzes project (languages, frameworks, structure, patterns)
-2. Installs framework files via deterministic script
-3. Customizes team members and principles for detected tech stack
-4. Updates CLAUDE.md integration
-5. Performs initial system analysis
-6. Reports customizations and findings
+2. Installs framework skeleton via deterministic script (templates, directories, config)
+3. Creates team members based on detected tech stack
+4. Creates architectural principles based on detected frameworks
+5. Updates CLAUDE.md integration
+6. Performs initial system analysis
+7. Reports customizations and findings
 
 **Customization guide**: [references/customization-guide.md](references/customization-guide.md)
 **Troubleshooting**: [references/installation-procedures.md](references/installation-procedures.md)
@@ -35,12 +36,7 @@ Use `Glob` and `Grep` to detect technologies, `Read` to examine configs.
 
 ### 2. Install Framework
 
-**If `.architecture/.architecture/` does not exist**, guide the user to clone first:
-```
-git clone https://github.com/bettison-org/ai-software-architect .architecture/.architecture
-```
-
-**Once cloned**, run the installation script. The script handles all file operations deterministically: prerequisite checks, copying framework files, creating directories, initializing config, cleaning up framework docs, and safely removing the template `.git/` directory.
+Run the installation script. The script clones the framework repo to `/tmp`, reads `.install-manifest` to determine what to copy, installs only template files and agent docs, creates empty directories for project content, and initializes config. No manual cloning needed.
 
 ```bash
 bash "<skill-base-dir>/scripts/install-framework.sh" "$(pwd)"
@@ -50,9 +46,26 @@ Where `<skill-base-dir>` is this skill's base directory shown at the top of the 
 
 The script outputs structured status tokens. If it fails, check stderr for the specific error. See [references/installation-procedures.md § Troubleshooting](references/installation-procedures.md#troubleshooting) for recovery steps.
 
-### 3. Customize Architecture Team
+**What the script installs:**
+- `templates/` — ADR, review, config, and other templates
+- `agent_docs/` — reference documentation for progressive disclosure (ADR-006)
+- Empty directories: `decisions/adrs/`, `reviews/`, `recalibration/`, `comparisons/`
+- `config.yml` — initialized from `templates/config.yml` (only if not already present)
 
-Add technology-specific members to `.architecture/members.yml`:
+**What the script does NOT install** (created by later steps):
+- `members.yml` — created in step 3
+- `principles.md` — created in step 4
+- `reviews/initial-system-analysis.md` — created in step 6
+
+### 3. Create Architecture Team
+
+Create `.architecture/members.yml` from scratch based on the project analysis from step 1. This file does not exist yet — the install script does not copy one.
+
+Use the format from [assets/member-template.yml](assets/member-template.yml).
+
+**Always include core members**: Systems Architect, Domain Expert, Security, Performance, Maintainability, AI Engineer, Pragmatic Enforcer.
+
+**Add technology-specific members** based on detected stack:
 - **JavaScript/TypeScript**: JavaScript Expert, framework specialists (React/Vue/Angular)
 - **Python**: Python Expert, framework specialists (Django/Flask/FastAPI)
 - **Ruby**: Ruby Expert, Rails Architect
@@ -60,15 +73,15 @@ Add technology-specific members to `.architecture/members.yml`:
 - **Go**: Go Expert, Microservices Architect
 - **Rust**: Rust Expert, Systems Programmer
 
-Use template from [assets/member-template.yml](assets/member-template.yml).
-
-**Keep core members**: Systems Architect, Domain Expert, Security, Performance, Maintainability, AI Engineer, Pragmatic Enforcer.
-
 **Customization details**: [references/customization-guide.md § Customize Team Members](references/customization-guide.md#customize-architecture-team-members)
 
-### 4. Customize Architectural Principles
+### 4. Create Architectural Principles
 
-Add framework-specific principles to `.architecture/principles.md`:
+Create `.architecture/principles.md` from scratch based on the project analysis from step 1. This file does not exist yet — the install script does not copy one.
+
+**Always include universal principles**: simplicity, separation of concerns, testability, security by default.
+
+**Add framework-specific principles** based on detected stack:
 - **React**: Component composition, hooks, unidirectional data flow
 - **Rails**: Convention over configuration, DRY, RESTful design
 - **Django**: Explicit over implicit, reusable apps, use built-ins
@@ -127,23 +140,14 @@ Next Steps:
 
 ## Error Handling
 
-**Framework not cloned**:
-```
-The framework must be cloned first. Please run:
-
-git clone https://github.com/bettison-org/ai-software-architect .architecture/.architecture
-
-Then run setup again.
-```
-
 **Installation script fails**:
 ```
 The installation script exited with an error. Check the error message above.
 
 Common causes:
-- Exit 1: Framework not cloned or bad project path
+- Exit 1: Clone failed or bad project path
 - Exit 2: File copy failed (check permissions)
-- Exit 3: Safety check failed during .git cleanup (manual verification needed)
+- Exit 3: Manifest not found (repo may not support manifest-based installation)
 - Exit 4: Installation incomplete (missing files after copy)
 
 For recovery: see references/installation-procedures.md § Troubleshooting
